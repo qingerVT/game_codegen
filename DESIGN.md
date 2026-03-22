@@ -6,6 +6,38 @@
 
 ---
 
+## Game Design Constraints
+
+> This section is **automatically injected** into both the Planner and every Specialist prompt.
+> Add constraints here to enforce design invariants across all generated games.
+
+### Multiplayer Score Display
+
+- Every game with multiplayer MUST show a **leaderboard** displaying each connected player's score individually.
+- Scores are displayed as one row per player (e.g. "You: 5", "P3a2b: 3"), sorted highest-first.
+- The leaderboard updates live every frame by reading `ctx.scoreState` (a `Map<playerId, score>`).
+- **Do NOT** show only the local player's score — all players must be visible to all clients.
+- `ctx.scoreState` is the single source of truth for scores. It is written **only by the network module** from server-authoritative messages (`ctx.scoreState.set(playerId, newScore)`). **No other module may call `ctx.scoreState.set(...)` for any reason** — not on coin collection, not on state snapshots, not ever. Other modules read `ctx.scoreState` but never write it.
+
+### Score Synchronisation
+
+- The server is the **sole authority** for scores. Clients never increment scores locally.
+- When a scoring event occurs (e.g. coin collected), the client sends the action to the server; the server validates it, updates state, and broadcasts back a message containing `{ playerId, newScore }` for all clients to apply to `ctx.scoreState`.
+- Duplicate actions are prevented server-side (e.g. a Set of collected item IDs).
+- On join, the server sends a full state snapshot to the joining client: current scores for all players, already-collected items, and existing player positions.
+
+### Network Module Invariants
+
+- The Colyseus room is always named **`"game_room"`**. No other name is ever used.
+- `ctx.modules.network.onMessage(type, cb)` **stacks** handlers — multiple modules may register for the same message type and all callbacks fire. Internally implemented as `Map<type, callback[]>`.
+- `ctx.localPlayerId` is set by the network module in `build()` and must be read by other modules in `start()`, never earlier.
+- **On `playerJoined`**: call `ctx.scoreState.set(data.playerId, 0)` immediately. This is required so the HUD leaderboard shows the new player from the moment they join, even before they score.
+- **On `playerLeft`**: call `ctx.scoreState.delete(data.playerId)` to remove them from the leaderboard.
+- **On any server message that includes `newScore`** (e.g. `coinCollected`, `itemPickedUp`): call `ctx.scoreState.set(playerId, newScore)` right inside that handler. Do NOT rely on a separate `scoreUpdate` message — if the scoring event itself carries the updated score, apply it immediately.
+- **On `state_snapshot`**: iterate all players and call `ctx.scoreState.set(playerId, score)` for each. This ensures a late-joining client sees everyone's current score immediately.
+
+---
+
 ## Table of Contents
 
 1. System Overview

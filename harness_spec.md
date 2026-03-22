@@ -66,6 +66,12 @@ The harness drives the lifecycle in this order:
 
   // Network
   wsUrl,             // string — Colyseus server URL
+  localPlayerId,     // string — set by the network module in build(). Read in start(), never in build().
+                     // Equals the Colyseus sessionId when connected, or a local fallback string offline.
+
+  // Shared score state — set by the network or score module in build()
+  scoreState,        // Map<playerId, score> — authoritative scores for all players.
+                     // Updated from server messages. HUD modules read this every update().
 
   // Module references (available after all build() calls complete)
   modules,           // object keyed by module name — access any module via ctx.modules.<name>
@@ -105,10 +111,67 @@ All server communication must go through the network module — never use `Colys
 
 ```js
 ctx.modules.network.send(type, payload)       // send message to server
-ctx.modules.network.onMessage(type, callback) // register message handler
+ctx.modules.network.onMessage(type, callback) // register message handler — STACKS multiple handlers for the same type
 ```
 
+`onMessage` **stacks** callbacks — multiple modules may register for the same message type and all handlers will fire. Do not assume you are the only listener.
+
 The network module handles singleplayer fallback transparently — your module does not need to check if a server is connected.
+
+**The Colyseus room is always named `"game_room"`.**
+
+### Server-Authoritative Scoring
+
+The server is the single source of truth for scores. Follow this pattern to avoid double-counting:
+
+1. **On local action** (e.g. coin touch): remove the object from the scene immediately (client-side prediction for feel), dispatch the local event, and `send()` the action to the server. **Do NOT increment score locally.**
+2. **On server confirmation** (e.g. `coin_collected` message with `newScore`): update `ctx.scoreState.set(playerId, newScore)` for the given player. This is the only place scores change.
+3. **HUD modules** read `ctx.scoreState` every `update(dt)` and render scores for ALL players.
+
+```js
+// ✅ Correct — server-authoritative
+ctx.modules.network.onMessage('coin_collected', ({ coinId, playerId, newScore }) => {
+  ctx.scoreState.set(playerId, newScore);   // authoritative score
+  removeCoinMesh(coinId);                   // idempotent — safe to call again
+});
+
+// ❌ Wrong — double-counts when server echoes back to sender
+this._localScore++;                         // local increment
+ctx.modules.network.send('collect_coin', { coinId });
+// then also handling the server echo: this._localScore++ again
+```
+
+### Network Module Contract
+
+The network module must set these on `ctx` in `build()`:
+- `ctx.localPlayerId` — the local player's session ID
+- `ctx.scoreState` — an empty `Map<string, number>()` (populated by score/network module from server messages)
+
+**Player join/leave:** When the server notifies that a player joined (any `playerJoined`-style message), the network module must immediately call `ctx.scoreState.set(playerId, 0)` so the HUD shows the new player at score 0 from the start. When a player leaves, call `ctx.scoreState.delete(playerId)`.
+
+**Score updates from ANY message:** Every server message that contains a `newScore` field (or equivalent) must be handled by calling `ctx.scoreState.set(playerId, newScore)`. This includes scoring-event confirmations like `coinCollected`, `itemPickedUp`, etc. — not only a dedicated `scoreUpdate` message. Do NOT wait for a separate `scoreUpdate` message if the scoring event itself already contains the updated score.
+
+```js
+// ✅ On player join — initialize score immediately
+room.onMessage('playerJoined', (data) => {
+  ctx.scoreState.set(data.playerId, 0);
+  // also spawn remote avatar mesh ...
+});
+
+// ✅ On any scoring confirmation that carries newScore
+room.onMessage('coinCollected', (data) => {
+  ctx.scoreState.set(data.playerId, data.newScore);   // REQUIRED
+  removeCoinVisual(data.coinId);
+});
+
+// ✅ On initial state_snapshot — populate ALL players' scores
+room.onMessage('state_snapshot', (data) => {
+  for (const [pid, score] of Object.entries(data.scores)) {
+    ctx.scoreState.set(pid, score);
+  }
+  ctx.localPlayerId = room.sessionId;
+});
+```
 
 ---
 

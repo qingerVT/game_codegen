@@ -16,6 +16,9 @@ import anthropic
 
 from utils.js_syntax_check import extract_js_from_response, validate_module_source
 from utils.contract_filter import filter_contract_for_specialist, summarize_payload_shapes
+from utils.design_constraints import load_design_constraints
+
+DESIGN_CONSTRAINTS = load_design_constraints()
 
 HARNESS_SPEC_PATH = Path(__file__).parent / "harness_spec.md"
 HARNESS_SPEC = HARNESS_SPEC_PATH.read_text()
@@ -43,19 +46,30 @@ Here are your relevant contract sections:
 - NEVER call `requestAnimationFrame` — the harness calls `update(dt)` for you. For UI/HUD modules, update DOM elements inside `update(dt)`, not in a rAF loop.
 - Remove ALL event listeners and Rapier bodies in `dispose()`.
 - Do NOT use import statements — THREE, RAPIER, GLTFLoader, EffectComposer, UnrealBloomPass, ColyseusClient are globals.
+- Use `ctx.localPlayerId` for the local player's ID — read it in `start()`, never in `build()` (network sets it during build).
+- Use `ctx.scoreState` (a Map<playerId, score>) as the shared score state. Update it from server messages only — do NOT increment scores locally before server confirmation.
+- HUD/score modules MUST display ALL players' scores as a leaderboard by reading `ctx.scoreState` every `update(dt)`.
 """
 
 NETWORK_EXTRA = """
 ## Network Specialist Requirements
 - Expose on ctx.modules.network (attach in build()):
   - `send(type, payload)` — sends a message to the server
-  - `onMessage(type, callback)` — registers a handler (replace, not stack, on duplicate type)
+  - `onMessage(type, callback)` — STACKS handlers; multiple modules may call onMessage for the same type and ALL callbacks fire. Implement this with a Map<type, callback[]> internally.
   - `isConnected()` — returns boolean connection state
 - Connect to Colyseus at `ctx.wsUrl` using the global `ColyseusClient`
+- ALWAYS use the room name `"game_room"` — this is what the server registers. Never invent a different room name.
 - Implement singleplayer fallback: if connection fails within `fallback_timeout_seconds`
   (from contract multiplayer_spec, default 3), silently continue offline.
   In offline mode, `send()` is a no-op (never throws). `isConnected()` returns false.
 - Do NOT buffer messages for replay — just drop them in offline mode.
+- In `build()`, set `ctx.localPlayerId = null` and `ctx.scoreState = new Map()` as placeholders.
+- After connecting, set `ctx.localPlayerId = room.sessionId` (or a fallback string in offline mode).
+- Handle the server's initial state message on join: populate `ctx.scoreState` with all players' scores, and spawn meshes for already-present remote players.
+- Handle `playerJoined` (and any equivalent server broadcast): call `ctx.scoreState.set(data.playerId, 0)` immediately so the new player appears in the leaderboard at score 0. Also spawn their avatar mesh.
+- Handle ALL server messages that carry a score (e.g. `coinCollected`, `itemPickedUp`, any event with `{playerId, newScore}`): call `ctx.scoreState.set(playerId, newScore)`. Do NOT wait for a separate `scoreUpdate` — if the scoring confirmation itself includes `newScore`, update scoreState there and then.
+- Handle `playerLeft` (and equivalents): call `ctx.scoreState.delete(data.playerId)` and remove their mesh.
+- This is the ONLY place scores are written — other modules only READ ctx.scoreState.
 """
 
 REQUEST_TEMPLATE = """Write the JavaScript module(s) for your specialist role.
@@ -114,6 +128,9 @@ async def run_specialist(
     )
     if is_network:
         system += NETWORK_EXTRA
+
+    if DESIGN_CONSTRAINTS:
+        system += "\n\n## Mandatory Design Constraints\n\n" + DESIGN_CONSTRAINTS
 
     module_names_str = ", ".join(f"'{m}'" for m in assigned_modules)
     user_message = REQUEST_TEMPLATE.format(module_names=module_names_str)
@@ -206,8 +223,6 @@ async def _call_llm(
     async with client.messages.stream(
         model="claude-opus-4-6",
         max_tokens=max_tokens,
-        # No extended thinking for specialists — they write code, not reason through problems.
-        # Thinking tokens eat into max_tokens and can truncate the code output.
         system=system,
         messages=[{"role": "user", "content": user_message}],
     ) as stream:

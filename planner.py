@@ -16,8 +16,10 @@ from pathlib import Path
 import anthropic
 
 from utils.schema_validator import validate_contract, validate_module_graph
+from utils.design_constraints import load_design_constraints
 
 HARNESS_SPEC = Path(__file__).parent / "harness_spec.md"
+DESIGN_CONSTRAINTS = load_design_constraints()
 
 SYSTEM_PROMPT = """You are a game architecture planner for a parallel AI agent pipeline.
 
@@ -139,6 +141,9 @@ Remember:
 
 Return ONLY the JSON object, no explanation."""
 
+# Design constraints from DESIGN.md — appended at runtime
+_DESIGN_CONSTRAINTS_HEADER = "\n\n## Mandatory Design Constraints\n\nThe following constraints MUST be reflected in the contract you produce:\n\n"
+
 
 async def run_planner(prompt: str, game_id: str | None = None) -> dict:
     """
@@ -152,6 +157,10 @@ async def run_planner(prompt: str, game_id: str | None = None) -> dict:
 
     last_errors = []
     for attempt in range(3):
+        system_with_constraints = SYSTEM_PROMPT
+        if DESIGN_CONSTRAINTS:
+            system_with_constraints += _DESIGN_CONSTRAINTS_HEADER + DESIGN_CONSTRAINTS
+
         user_content = USER_TEMPLATE.format(prompt=prompt, game_id=game_id)
 
         if attempt > 0 and last_errors:
@@ -166,7 +175,7 @@ async def run_planner(prompt: str, game_id: str | None = None) -> dict:
             model="claude-opus-4-6",
             max_tokens=64000,
             thinking={"type": "adaptive"},
-            system=SYSTEM_PROMPT,
+            system=system_with_constraints,
             messages=[{"role": "user", "content": user_content}],
         ) as stream:
             async for text in stream.text_stream:

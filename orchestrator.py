@@ -26,7 +26,7 @@ from integration import run_integration
 from utils.schema_validator import validate_contract, validate_module_graph
 from utils.trace import TraceEntry, write_trace
 
-PIPELINE_TIMEOUT_S = 590  # just under 10 minutes
+PIPELINE_TIMEOUT_S = 590   # just under 10 minutes
 SKIP_FIX_ROUNDS_AFTER_S = 480   # 8 min: skip integration fix rounds
 SKIP_INTEGRATION_AFTER_S = 540  # 9 min: skip integration entirely
 MAX_CONCURRENT_LLM = 5
@@ -117,7 +117,7 @@ async def run_pipeline(
     server_dir.mkdir(exist_ok=True)
     (server_dir / "package.json").write_text(
         '{"name":"game-server","version":"1.0.0","main":"index.js",'
-        '"dependencies":{"colyseus":"^0.17.8"}}'
+        '"dependencies":{"colyseus":"^0.15.0"}}'
     )
     npm_proc = subprocess.Popen(
         ["npm", "install", "--silent"],
@@ -319,7 +319,7 @@ async def _main():
         print(json.dumps(result, indent=2))
         sys.exit(0 if result["success"] else 1)
     except asyncio.TimeoutError:
-        print("[orchestrator] PIPELINE TIMEOUT (10 minutes)", file=sys.stderr)
+        print(f"[orchestrator] PIPELINE TIMEOUT ({PIPELINE_TIMEOUT_S}s)", file=sys.stderr)
         sys.exit(1)
     except Exception as e:
         print(f"[orchestrator] FATAL: {e}", file=sys.stderr)

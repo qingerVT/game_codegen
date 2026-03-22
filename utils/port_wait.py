@@ -13,7 +13,7 @@ def is_port_free(host: str, port: int) -> bool:
         return s.connect_ex((host, port)) != 0
 
 
-def find_free_port(host: str, start_port: int, count: int = 4) -> int:
+def find_free_port(host: str, start_port: int, count: int = 100) -> int:
     """
     Returns the first free port in [start_port, start_port+count).
     Raises RuntimeError if none are free.
