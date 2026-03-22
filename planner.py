@@ -17,9 +17,11 @@ import anthropic
 
 from utils.schema_validator import validate_contract, validate_module_graph
 from utils.design_constraints import load_design_constraints
+from utils.skill_loader import load_skills
 
 HARNESS_SPEC = Path(__file__).parent / "harness_spec.md"
 DESIGN_CONSTRAINTS = load_design_constraints()
+SKILLS = load_skills()
 
 SYSTEM_PROMPT = """You are a game architecture planner for a parallel AI agent pipeline.
 
@@ -160,6 +162,8 @@ async def run_planner(prompt: str, game_id: str | None = None) -> dict:
         system_with_constraints = SYSTEM_PROMPT
         if DESIGN_CONSTRAINTS:
             system_with_constraints += _DESIGN_CONSTRAINTS_HEADER + DESIGN_CONSTRAINTS
+        if SKILLS:
+            system_with_constraints += "\n\n## Technical Reference Skills\n\nUse the following SDK and library references when designing the contract and module graph:\n\n" + SKILLS
 
         user_content = USER_TEMPLATE.format(prompt=prompt, game_id=game_id)
 

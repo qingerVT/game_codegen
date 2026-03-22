@@ -50,8 +50,7 @@ Rules:
 - Score messages MUST always include `playerId` (client.sessionId) and `newScore` (the authoritative integer) so clients can update ctx.scoreState.set(playerId, newScore)
 - ANY server message that is triggered by a scoring action (coin collected, item picked up, etc.) MUST include BOTH `playerId` AND `newScore` in the same broadcast. Do NOT send score data in a separate `scoreUpdate` message — put it directly in the event confirmation (e.g. coinCollected broadcast includes {coinId, playerId, newScore}).
 - The `playerJoined` broadcast sent to all OTHER clients MUST include `{playerId, score: 0}` so receiving clients can initialize that player's score in ctx.scoreState immediately.
-- Pay close attention to server_to_client message names — they often DIFFER from client_to_server names
-  (e.g. client sends "collect_coin", server broadcasts "coin_collected" with {coinId, playerId, newScore})
+- CRITICAL: Use EXACTLY the message type strings listed in the server_to_client section of the contract for all broadcasts. Do NOT reuse the client_to_server type names for server broadcasts — they are different. For example if the client sends "playerMove" the server must broadcast "playerState" (per contract), not "playerMove".
 - Prevent duplicate actions (e.g. a coin can only be collected once — use a Set to track)
 - Detect win conditions from the contract and broadcast a game_over message with {winnerId, scores} when triggered
 - Write only the class GameRoom and its methods — do NOT include the Server boilerplate at the bottom
@@ -202,6 +201,38 @@ def _static_check_network_sends(module_map: dict, contract: dict) -> list:
                 violations.append((name, msg_type))
 
     return violations
+
+
+def _static_check_naming_conventions(module_map: dict, contract: dict) -> list:
+    """
+    Checks that modules use canonical ctx variable names.
+    Returns list of error dicts compatible with the static_errors list.
+    """
+    errors = []
+    forbidden = [
+        ("ctx.scoreMap", "ctx.scoreState (Map<playerId, score>)"),
+        ("ctx.localSessionId", "ctx.localPlayerId"),
+    ]
+    for mod_name, source in module_map.items():
+        for bad, good in forbidden:
+            if re.search(re.escape(bad), source):
+                errors.append({
+                    "module": mod_name,
+                    "error": f"Forbidden: '{bad}' — use '{good}' instead",
+                    "attributed_to": _find_specialist_for_module(mod_name, contract),
+                })
+        # Non-network modules must not write to ctx.scoreState
+        if "network" not in mod_name.lower():
+            if re.search(r'ctx\.scoreState\.set\s*\(', source):
+                errors.append({
+                    "module": mod_name,
+                    "error": (
+                        "Forbidden: ctx.scoreState.set() called outside the network module — "
+                        "scores must only be updated from server-authoritative messages in the network module"
+                    ),
+                    "attributed_to": _find_specialist_for_module(mod_name, contract),
+                })
+    return errors
 
 
 def _static_check_ctx_extensions(module_map: dict, contract: dict) -> list:
@@ -367,6 +398,9 @@ async def run_integration(
             "error": f"Missing ctx.{ext_name} = ... in build() — must attach this ctx_extension",
             "attributed_to": specialist_type,
         })
+
+    naming_errors = _static_check_naming_conventions(module_map, contract)
+    static_errors.extend(naming_errors)
 
     # Route static errors for fix (round 0)
     if static_errors:
@@ -609,6 +643,7 @@ def _get_harness_html(
   </script>
   <!-- Colyseus UMD -->
   <script src="https://unpkg.com/colyseus.js@0.15.22/dist/colyseus.js"></script>
+  <script>window.ColyseusClient = Colyseus.Client;</script>
 
   <script type="module">
     import * as THREE from 'three';

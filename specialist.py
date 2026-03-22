@@ -17,8 +17,10 @@ import anthropic
 from utils.js_syntax_check import extract_js_from_response, validate_module_source
 from utils.contract_filter import filter_contract_for_specialist, summarize_payload_shapes
 from utils.design_constraints import load_design_constraints
+from utils.skill_loader import load_skills
 
 DESIGN_CONSTRAINTS = load_design_constraints()
+SKILLS = load_skills()
 
 HARNESS_SPEC_PATH = Path(__file__).parent / "harness_spec.md"
 HARNESS_SPEC = HARNESS_SPEC_PATH.read_text()
@@ -46,16 +48,24 @@ Here are your relevant contract sections:
 - NEVER call `requestAnimationFrame` — the harness calls `update(dt)` for you. For UI/HUD modules, update DOM elements inside `update(dt)`, not in a rAF loop.
 - Remove ALL event listeners and Rapier bodies in `dispose()`.
 - Do NOT use import statements — THREE, RAPIER, GLTFLoader, EffectComposer, UnrealBloomPass, ColyseusClient are globals.
-- Use `ctx.localPlayerId` for the local player's ID — read it in `start()`, never in `build()` (network sets it during build).
-- Use `ctx.scoreState` (a Map<playerId, score>) as the shared score state. Update it from server messages only — do NOT increment scores locally before server confirmation.
-- HUD/score modules MUST display ALL players' scores as a leaderboard by reading `ctx.scoreState` every `update(dt)`.
+- Use `ctx.localPlayerId` for the local player's ID — read it in `start()`, never in `build()` (network sets it during build). NEVER use `ctx.localSessionId` — that name does not exist.
+- Use `ctx.scoreState` (a Map<playerId, score>) as the shared score state — NEVER `ctx.scoreMap`. Only the network module writes to it; all other modules only read it.
+- HUD/score modules MUST display ALL players' scores as a leaderboard by reading `ctx.scoreState` every `update(dt)`. Showing only the local player's score is a bug.
 """
 
 NETWORK_EXTRA = """
 ## Network Specialist Requirements
 - Expose on ctx.modules.network (attach in build()):
   - `send(type, payload)` — sends a message to the server
-  - `onMessage(type, callback)` — STACKS handlers; multiple modules may call onMessage for the same type and ALL callbacks fire. Implement this with a Map<type, callback[]> internally.
+  - `onMessage(type, callback)` — STACKS handlers; multiple modules may call onMessage for the same type and ALL callbacks fire. Implement internally as `Map<type, callback[]>` (an array per type, never a single callback). Example:
+    ```js
+    this._handlers = new Map();  // Map<string, Function[]>
+    this.onMessage = (type, cb) => {
+      if (!this._handlers.has(type)) this._handlers.set(type, []);
+      this._handlers.get(type).push(cb);
+    };
+    // When dispatching: for (const cb of this._handlers.get(type) ?? []) cb(data);
+    ```
   - `isConnected()` — returns boolean connection state
 - Connect to Colyseus at `ctx.wsUrl` using the global `ColyseusClient`
 - ALWAYS use the room name `"game_room"` — this is what the server registers. Never invent a different room name.
@@ -70,6 +80,11 @@ NETWORK_EXTRA = """
 - Handle ALL server messages that carry a score (e.g. `coinCollected`, `itemPickedUp`, any event with `{playerId, newScore}`): call `ctx.scoreState.set(playerId, newScore)`. Do NOT wait for a separate `scoreUpdate` — if the scoring confirmation itself includes `newScore`, update scoreState there and then.
 - Handle `playerLeft` (and equivalents): call `ctx.scoreState.delete(data.playerId)` and remove their mesh.
 - This is the ONLY place scores are written — other modules only READ ctx.scoreState.
+
+## CRITICAL — Forbidden Patterns (will cause validation failure)
+- NEVER use `ctx.scoreMap` — the correct name is `ctx.scoreState`
+- NEVER use `ctx.localSessionId` — the correct name is `ctx.localPlayerId`
+- NEVER use a single callback per message type (`Map<type, callback>`) — must stack (`Map<type, callback[]>`)
 """
 
 REQUEST_TEMPLATE = """Write the JavaScript module(s) for your specialist role.
@@ -131,6 +146,9 @@ async def run_specialist(
 
     if DESIGN_CONSTRAINTS:
         system += "\n\n## Mandatory Design Constraints\n\n" + DESIGN_CONSTRAINTS
+
+    if SKILLS:
+        system += "\n\n## Technical Reference Skills\n\nUse these SDK/library references when implementing your modules:\n\n" + SKILLS
 
     module_names_str = ", ".join(f"'{m}'" for m in assigned_modules)
     user_message = REQUEST_TEMPLATE.format(module_names=module_names_str)

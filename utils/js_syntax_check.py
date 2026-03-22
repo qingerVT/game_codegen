@@ -106,7 +106,9 @@ def validate_module_source(source: str, module_name: str) -> list[str]:
     )
     if build_match:
         build_body = build_match.group(1)
-        if re.search(r'ctx\.modules\b', build_body):
+        # Strip single-line comments before checking to avoid false positives
+        build_body_no_comments = re.sub(r'//[^\n]*', '', build_body)
+        if re.search(r'ctx\.modules\b', build_body_no_comments):
             issues.append(
                 "Must not access ctx.modules inside build() — use start() or update() instead"
             )
@@ -120,5 +122,23 @@ def validate_module_source(source: str, module_name: str) -> list[str]:
     # Top-level await (outside async function)
     if re.search(r'^await\s', source, re.MULTILINE):
         issues.append("Top-level 'await' is not supported — use await inside async build()")
+
+    # Forbidden ctx variable names — must use canonical names
+    if re.search(r'\bctx\.scoreMap\b', source):
+        issues.append(
+            "Forbidden: ctx.scoreMap — use ctx.scoreState (Map<playerId, score>) instead"
+        )
+    if re.search(r'\bctx\.localSessionId\b', source):
+        issues.append(
+            "Forbidden: ctx.localSessionId — use ctx.localPlayerId instead"
+        )
+
+    # Score writes outside the network module — only network may call ctx.scoreState.set()
+    if 'network' not in module_name.lower():
+        if re.search(r'ctx\.scoreState\.set\s*\(', source):
+            issues.append(
+                "Forbidden: only the network module may call ctx.scoreState.set() — "
+                "remove this call; scores must be updated from server-authoritative messages only"
+            )
 
     return issues
