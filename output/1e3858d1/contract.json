@@ -1,0 +1,301 @@
+{
+  "game_id": "1e3858d1",
+  "prompt": "top-down arena shooter, players shoot each other for points",
+  "contract_warnings": [
+    "Health is tracked client-side via playerHealthMap updated from server messages; slight desync may occur under latency",
+    "Bullet visuals are client-predicted from bullet_fired broadcast; actual hit resolution is fully server-side",
+    "player_killed includes newScore for the shooter \u2014 network must call ctx.scoreState.set(shooterId, newScore) in that handler"
+  ],
+  "specialists": [
+    {
+      "type": "network",
+      "specialist_description": "Manages Colyseus game_room connection, all message sending/receiving, ctx.scoreState writes, ctx.localPlayerId assignment. Routes incoming server messages to stacked onMessage handlers. Listens for localPlayerMoved and shootRequested events to relay to server.",
+      "assigned_modules": [
+        "network_sync"
+      ]
+    },
+    {
+      "type": "arena_builder",
+      "specialist_description": "Creates the top-down arena environment: ground plane, boundary walls, and scattered obstacle blocks. Exposes arena dimensions and wall collision bounds for movement clamping and bullet collision.",
+      "assigned_modules": [
+        "arena_map"
+      ]
+    },
+    {
+      "type": "player_controller",
+      "specialist_description": "Spawns and manages player entities (local + remote). Handles WASD movement with arena-bound clamping, mouse-aim rotation, health tracking. Registers onMessage handlers for player_joined, player_left, player_moved, player_hit, player_killed, and state_snapshot to update remote player meshes and health.",
+      "assigned_modules": [
+        "player_controller"
+      ]
+    },
+    {
+      "type": "combat_system",
+      "specialist_description": "Handles click-to-shoot input, spawns and animates bullet visuals, plays hit/death effects. Registers onMessage handlers for bullet_fired (spawn remote bullets), player_hit (hit sparks), and player_killed (death explosion). Emits shootRequested for network relay.",
+      "assigned_modules": [
+        "combat_system"
+      ]
+    },
+    {
+      "type": "hud_renderer",
+      "specialist_description": "Renders the live multiplayer leaderboard from ctx.scoreState sorted highest-first, per-player health bars floating above player meshes, a crosshair overlay, and a kill-feed notification log.",
+      "assigned_modules": [
+        "hud_display"
+      ]
+    }
+  ],
+  "interfaces": {
+    "ctx_extensions": [
+      {
+        "name": "scoreState",
+        "type": "Map<string, number>",
+        "description": "Server-authoritative player scores. Written ONLY by network module via scoreState.set(). Key=playerId, Value=current kill count.",
+        "provided_by": "network",
+        "consumed_by": [
+          "hud_renderer"
+        ]
+      },
+      {
+        "name": "localPlayerId",
+        "type": "string",
+        "description": "Session ID of the local player, set by network in build(). Other modules read in start() or later.",
+        "provided_by": "network",
+        "consumed_by": [
+          "player_controller",
+          "combat_system",
+          "hud_renderer"
+        ]
+      },
+      {
+        "name": "players",
+        "type": "Map<string, { mesh: BABYLON.Mesh, x: number, z: number, rotation: number, health: number, alive: boolean }>",
+        "description": "All active player entities with their meshes, positions, and health. Managed exclusively by player_controller.",
+        "provided_by": "player_controller",
+        "consumed_by": [
+          "combat_system",
+          "hud_renderer"
+        ]
+      },
+      {
+        "name": "arenaConfig",
+        "type": "{ width: number, depth: number, wallMeshes: BABYLON.Mesh[], wallBounds: Array<{ minX: number, maxX: number, minZ: number, maxZ: number }>, spawnPoints: Array<{ x: number, z: number }> }",
+        "description": "Arena geometry data: overall size, wall meshes for rendering, wall axis-aligned bounding boxes for collision, and spawn point locations.",
+        "provided_by": "arena_builder",
+        "consumed_by": [
+          "player_controller",
+          "combat_system"
+        ]
+      },
+      {
+        "name": "playerHealthMap",
+        "type": "Map<string, number>",
+        "description": "Current health per player. Updated by player_controller when receiving player_hit and player_killed messages. Max health is 100.",
+        "provided_by": "player_controller",
+        "consumed_by": [
+          "hud_renderer",
+          "combat_system"
+        ]
+      }
+    ],
+    "events": [
+      {
+        "name": "localPlayerMoved",
+        "payload_shape": {
+          "x": "number",
+          "z": "number",
+          "rotation": "number"
+        },
+        "emitted_by": "player_controller",
+        "consumed_by": [
+          "network"
+        ]
+      },
+      {
+        "name": "shootRequested",
+        "payload_shape": {
+          "x": "number",
+          "z": "number",
+          "dirX": "number",
+          "dirZ": "number"
+        },
+        "emitted_by": "combat_system",
+        "consumed_by": [
+          "network"
+        ]
+      },
+      {
+        "name": "killFeedEntry",
+        "payload_shape": {
+          "shooterId": "string",
+          "victimId": "string"
+        },
+        "emitted_by": "combat_system",
+        "consumed_by": [
+          "hud_renderer"
+        ]
+      }
+    ],
+    "mesh_registry": [
+      {
+        "name": "arena_floor",
+        "description": "Ground plane mesh for the arena. Used for pointer picking (aim target).",
+        "provided_by": "arena_builder",
+        "consumed_by": [
+          "combat_system"
+        ]
+      },
+      {
+        "name": "arena_walls",
+        "description": "Array of wall/obstacle meshes for collision checks.",
+        "provided_by": "arena_builder",
+        "consumed_by": [
+          "player_controller",
+          "combat_system"
+        ]
+      },
+      {
+        "name": "player_body",
+        "description": "Template mesh for a player character. Cloned per player. Cylinder with a gun-barrel direction indicator.",
+        "provided_by": "player_controller",
+        "consumed_by": [
+          "combat_system"
+        ]
+      },
+      {
+        "name": "bullet_template",
+        "description": "Small emissive sphere mesh used as template. Cloned per active bullet.",
+        "provided_by": "combat_system",
+        "consumed_by": []
+      }
+    ]
+  },
+  "network_protocol": {
+    "client_to_server": [
+      {
+        "type": "player_move",
+        "description": "Sends local player's current position and rotation, throttled to sync_rate_hz.",
+        "payload_shape": {
+          "x": "number",
+          "z": "number",
+          "rotation": "number"
+        }
+      },
+      {
+        "type": "player_shoot",
+        "description": "Player fires a bullet from their position in the aimed direction.",
+        "payload_shape": {
+          "x": "number",
+          "z": "number",
+          "dirX": "number",
+          "dirZ": "number"
+        }
+      }
+    ],
+    "server_to_client": [
+      {
+        "type": "state_snapshot",
+        "description": "Full game state sent to a newly joined client. Network module iterates players to set scoreState entries.",
+        "payload_shape": {
+          "players": "Array<{ playerId: string, x: number, z: number, rotation: number, score: number, health: number }>"
+        },
+        "target": "requester"
+      },
+      {
+        "type": "player_joined",
+        "description": "A new player connected. Network sets scoreState.set(playerId, 0).",
+        "payload_shape": {
+          "playerId": "string",
+          "x": "number",
+          "z": "number"
+        },
+        "target": "broadcast"
+      },
+      {
+        "type": "player_left",
+        "description": "A player disconnected. Network calls scoreState.delete(playerId).",
+        "payload_shape": {
+          "playerId": "string"
+        },
+        "target": "broadcast"
+      },
+      {
+        "type": "player_moved",
+        "description": "Relayed position update for a remote player.",
+        "payload_shape": {
+          "playerId": "string",
+          "x": "number",
+          "z": "number",
+          "rotation": "number"
+        },
+        "target": "broadcast"
+      },
+      {
+        "type": "bullet_fired",
+        "description": "Server validated bullet. All clients spawn the visual.",
+        "payload_shape": {
+          "bulletId": "string",
+          "playerId": "string",
+          "x": "number",
+          "z": "number",
+          "dirX": "number",
+          "dirZ": "number"
+        },
+        "target": "broadcast"
+      },
+      {
+        "type": "player_hit",
+        "description": "A bullet hit a player. Contains shooter's updated score. Network calls scoreState.set(shooterId, newScore).",
+        "payload_shape": {
+          "shooterId": "string",
+          "victimId": "string",
+          "newScore": "number",
+          "victimHealth": "number"
+        },
+        "target": "broadcast"
+      },
+      {
+        "type": "player_killed",
+        "description": "A player was killed and will respawn. Contains shooter's updated score. Network calls scoreState.set(shooterId, newScore).",
+        "payload_shape": {
+          "shooterId": "string",
+          "victimId": "string",
+          "newScore": "number",
+          "spawnX": "number",
+          "spawnZ": "number"
+        },
+        "target": "broadcast"
+      }
+    ]
+  },
+  "gameplay_spec": {
+    "win_conditions": [
+      "First player to reach 10 kills wins the round"
+    ],
+    "fail_conditions": [
+      "None \u2014 continuous respawn, no permanent elimination"
+    ],
+    "collectibles": [],
+    "player_config": {
+      "max_health": 100,
+      "move_speed": 5,
+      "fire_rate_per_second": 3,
+      "bullet_speed": 15,
+      "bullet_damage": 34,
+      "respawn_time_seconds": 2
+    }
+  },
+  "multiplayer_spec": {
+    "max_players": 8,
+    "sync_rate_hz": 20,
+    "singleplayer_fallback": true,
+    "fallback_timeout_seconds": 3
+  },
+  "visual_spec": {
+    "camera": "Fixed top-down camera (ArcRotateCamera, alpha=0, beta=0, radius=25) looking straight down, attached to local player with smooth follow",
+    "arena_style": "Dark metallic rectangular floor (20x20 units) with neon-edged boundary walls and 4-6 scattered rectangular obstacle blocks",
+    "player_style": "Colored cylinder (radius 0.4, height 0.3) with a thin box extending forward as gun barrel. Each player assigned a unique bright color.",
+    "bullet_style": "Small emissive sphere (radius 0.1) with matching player color, leaving a short particle trail",
+    "hit_effects": "Orange spark particles at impact point on hit, red flash on victim mesh",
+    "death_effects": "Brief mesh scaling pulse then fade, particle burst explosion, respawn fade-in after timer",
+    "hud_layout": "Leaderboard top-right showing all players sorted by score, crosshair at screen center, kill feed messages bottom-left fading after 4s"
+  }
+}

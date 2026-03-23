@@ -1,0 +1,11 @@
+{
+  "game_id": "1e3858d1",
+  "load_order": [
+    "network_sync",
+    "arena_map",
+    "player_controller",
+    "combat_system",
+    "hud_display"
+  ],
+  "modules_path": "./modules/"
+}

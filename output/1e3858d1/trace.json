@@ -1,0 +1,62 @@
+[
+  {
+    "specialist_type": "network",
+    "started_at": "2026-03-23T07:26:10.069909Z",
+    "ended_at": "2026-03-23T07:26:39.315613Z",
+    "duration_s": 29.25,
+    "modules_produced": [
+      "network_sync"
+    ],
+    "iterations": 1,
+    "error": null,
+    "blocked_by": null
+  },
+  {
+    "specialist_type": "arena_builder",
+    "started_at": "2026-03-23T07:26:10.077903Z",
+    "ended_at": "2026-03-23T07:26:41.815350Z",
+    "duration_s": 31.74,
+    "modules_produced": [
+      "arena_map"
+    ],
+    "iterations": 1,
+    "error": null,
+    "blocked_by": null
+  },
+  {
+    "specialist_type": "player_controller",
+    "started_at": "2026-03-23T07:26:41.815549Z",
+    "ended_at": "2026-03-23T07:27:35.862922Z",
+    "duration_s": 54.05,
+    "modules_produced": [
+      "player_controller"
+    ],
+    "iterations": 1,
+    "error": null,
+    "blocked_by": null
+  },
+  {
+    "specialist_type": "hud_renderer",
+    "started_at": "2026-03-23T07:27:35.872186Z",
+    "ended_at": "2026-03-23T07:28:19.378786Z",
+    "duration_s": 43.51,
+    "modules_produced": [
+      "hud_display"
+    ],
+    "iterations": 1,
+    "error": null,
+    "blocked_by": null
+  },
+  {
+    "specialist_type": "combat_system",
+    "started_at": "2026-03-23T07:27:35.863185Z",
+    "ended_at": "2026-03-23T07:28:30.517019Z",
+    "duration_s": 54.65,
+    "modules_produced": [
+      "combat_system"
+    ],
+    "iterations": 1,
+    "error": null,
+    "blocked_by": null
+  }
+]

@@ -1,0 +1,8 @@
+{
+  "name": "game-server",
+  "version": "1.0.0",
+  "main": "index.js",
+  "dependencies": {
+    "colyseus": "^0.15.0"
+  }
+}
